@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
 
 // === 國考科目與章節資料結構 (權重來源：PDF 文件) ===
 const EXAM_DATA = [
@@ -16,7 +16,6 @@ const EXAM_DATA = [
         id: "s1_c1",
         title: "全範圍",
         parts: ["藥理", "藥化"],
-        // 來源 
         chapterWeights: [
           8.8, 3.2, 3.9, 0.4, 2.2, 3.0, 0.6, 1.1, 2.8, 2.4, 1.9, 0.9, 3.6, 3.2, 0.2, 1.7, 1.3, 1.5, 1.5, 0.2,
           3.0, 3.9, 2.8, 3.6, 1.5, 0.7, 1.9, 2.4, 0.6, 1.7, 1.3, 2.8, 5.0, 1.5, 1.9, 7.3, 2.8, 0.4
@@ -40,7 +39,6 @@ const EXAM_DATA = [
         id: "s2_c1",
         title: "藥物分析學",
         parts: ["藥分"],
-        // 來源 [cite: 5, 6]
         chapterWeights: [
           3.66, 1.93, 1.16, 1.35, 0.58, 3.47, 0.87, 0.29, 1.35, 2.50, 0.77, 1.83, 1.73, 0.58, 0.96, 1.83, 2.50,
           5.59, 2.22, 10.12, 5.30, 0.67, 3.28, 3.56, 5.59, 8.00, 2.89, 8.86, 4.34, 2.60, 0.87, 2.70, 1.83, 8.75, 0.10
@@ -59,7 +57,6 @@ const EXAM_DATA = [
         id: "s2_c2",
         title: "生藥學",
         parts: ["生藥"],
-        // 來源 [cite: 8]
         chapterWeights: [28.8, 17.3, 9.6, 7.7, 7.7, 5.8, 5.8, 5.8, 5.8, 3.8, 1.9, 0.1],
         chapters: [
           "生物鹼", "配醣體", "揮發油", "苯丙烷", "萜類", "強心苷", 
@@ -70,7 +67,6 @@ const EXAM_DATA = [
         id: "s2_c3",
         title: "中藥學",
         parts: ["中藥"],
-        // 來源 [cite: 10]
         chapterWeights: [21.6, 15.4, 9.9, 7.4, 6.2, 6.2, 4.9, 4.9, 4.3, 3.7, 3.1, 3.1, 2.5, 1.9, 1.9, 1.2, 0.6, 0.6, 0.6],
         chapters: [
           "補虛藥", "清熱藥", "解表藥", "化痰止咳平喘", "利水滲濕藥", "活血祛瘀藥", 
@@ -88,7 +84,6 @@ const EXAM_DATA = [
         id: "s3_c1",
         title: "藥劑學",
         parts: ["藥劑"],
-        // 來源 [cite: 12]
         chapterWeights: [
           4.17, 0.83, 3.33, 1.67, 1.67, 2.50, 5.83, 2.50, 3.33, 5.00, 5.00, 2.50, 7.50, 1.67, 2.50, 1.67, 3.33, 7.50, 4.17, 1.67
         ],
@@ -102,7 +97,6 @@ const EXAM_DATA = [
         id: "s3_c2",
         title: "生物藥劑學",
         parts: ["生藥劑"],
-        // 來源 [cite: 12]
         chapterWeights: [1.67, 0.83, 4.17, 1.67, 1.67, 1.67, 5.00, 5.00, 3.33, 2.50, 4.17],
         chapters: [
           "緒論", "藥物動力學模型", "I.V. (一室、二室)", "E.V. (一室、二室)", 
@@ -116,7 +110,6 @@ const EXAM_DATA = [
 
 const TASK_WEIGHTS = { skim: 20, read: 40, exam: 40 };
 
-// === 計算總分的邏輯 ===
 const calculateTotalGlobalPoints = () => {
   let total = 0;
   EXAM_DATA.forEach(subj => {
@@ -127,10 +120,8 @@ const calculateTotalGlobalPoints = () => {
   });
   return total;
 };
-
 const GLOBAL_TOTAL_POINTS = calculateTotalGlobalPoints();
 
-// === Firebase 設定 ===
 const firebaseConfig = {
   apiKey: "AIzaSyBwPNXg4zU8R2rjt0AxqBVz62rDY4aOBOE",
   authDomain: "exam-tracker-ae31d.firebaseapp.com",
@@ -149,33 +140,43 @@ const appId = 'exam-tracker-v1';
 export default function App() {
   const [user, setUser] = useState(null);
   const [authLoaded, setAuthLoaded] = useState(false);
-  const [nickname, setNickname] = useState(() => localStorage.getItem('exam_nickname') || '');
+  
+  // 帳號與登入狀態
+  const [account, setAccount] = useState(() => localStorage.getItem('exam_account') || '');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  
+  // 輸入框暫存 (避免打字時觸發監聽)
+  const [inputAccount, setInputAccount] = useState('');
+  
   const [myTasks, setMyTasks] = useState([]);
   const [allUsersData, setAllUsersData] = useState([]);
   const [activeSubjectId, setActiveSubjectId] = useState(null);
   const [activeCategoryId, setActiveCategoryId] = useState(null);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
+  // 1. 初始身份認證
   useEffect(() => {
-    signInAnonymously(auth).catch(err => console.error(err));
+    signInAnonymously(auth).catch(err => console.error("Auth init fail:", err));
     const unsubscribe = onAuthStateChanged(auth, (usr) => {
       setUser(usr);
       setAuthLoaded(true);
-      if (nickname) setIsLoggedIn(true);
+      if (account) setIsLoggedIn(true);
     });
     return () => unsubscribe();
-  }, [nickname]);
+  }, [account]);
 
+  // 2. 只有在登入成功且有帳號後，才開啟 Firebase 監聽
   useEffect(() => {
-    if (!user || !isLoggedIn || !nickname) return;
+    if (!user || !isLoggedIn || !account) return;
+
     const progressRef = collection(db, 'artifacts', appId, 'public', 'data', 'userProgress');
     const unsubscribe = onSnapshot(progressRef, (snapshot) => {
       const users = [];
       let foundMyData = false;
+      
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
-        if (docSnap.id === nickname) {
+        if (docSnap.id === account) {
           setMyTasks(data.tasks || []);
           foundMyData = true;
         }
@@ -184,16 +185,20 @@ export default function App() {
           totalPoints: data.totalPoints || 0
         });
       });
+
+      // 若為新帳號，初始化
       if (!foundMyData) {
-        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', nickname), {
+        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', account), {
           tasks: [], totalPoints: 0, updatedAt: Date.now()
         }, { merge: true });
       }
+
       users.sort((a, b) => b.totalPoints - a.totalPoints);
       setAllUsersData(users);
-    });
+    }, (err) => console.error("Firestore error:", err));
+
     return () => unsubscribe();
-  }, [user, isLoggedIn, nickname]);
+  }, [user, isLoggedIn, account]);
 
   const calculatePoints = (tasks, targetSubjId = null) => {
     let points = 0;
@@ -203,10 +208,11 @@ export default function App() {
         cat.chapters.forEach((_, chapIdx) => {
           cat.parts.forEach((_, partIdx) => {
             const weight = cat.chapterWeights ? cat.chapterWeights[chapIdx] : 1;
-            const baseKey = `${subj.id}_${cat.id}_${chapIdx}_${partIdx}`;
-            if (tasks.includes(`${baseKey}_skim`)) points += weight * (TASK_WEIGHTS.skim / 100);
-            if (tasks.includes(`${baseKey}_read`)) points += weight * (TASK_WEIGHTS.read / 100);
-            if (tasks.includes(`${baseKey}_exam`)) points += weight * (TASK_WEIGHTS.exam / 100);
+            const baseKey = `${subj.id}_${cat.id}_${idx}_${partIdx}`; // 注意這裡 idx 改回 chapIdx
+            const realKey = `${subj.id}_${cat.id}_${chapIdx}_${partIdx}`;
+            if (tasks.includes(`${realKey}_skim`)) points += weight * 0.2;
+            if (tasks.includes(`${realKey}_read`)) points += weight * 0.4;
+            if (tasks.includes(`${realKey}_exam`)) points += weight * 0.4;
           });
         });
       });
@@ -216,11 +222,21 @@ export default function App() {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    const nameStr = nickname.trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_');
-    if (!nameStr) return;
-    setNickname(nameStr);
-    localStorage.setItem('exam_nickname', nameStr);
+    const cleanAccount = inputAccount.trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_');
+    if (!cleanAccount || cleanAccount.length < 2) {
+      alert("帳號長度不足或包含非法字元");
+      return;
+    }
+    setAccount(cleanAccount);
+    localStorage.setItem('exam_account', cleanAccount);
     setIsLoggedIn(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('exam_account');
+    setAccount('');
+    setIsLoggedIn(false);
+    setMyTasks([]);
   };
 
   const toggleTask = async (taskId) => {
@@ -228,30 +244,34 @@ export default function App() {
     setMyTasks(newTasks);
     const points = calculatePoints(newTasks);
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', nickname), {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', account), {
         tasks: newTasks, totalPoints: points, updatedAt: Date.now()
       }, { merge: true });
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error("Update fail:", err); }
   };
 
   const myTotalPoints = useMemo(() => calculatePoints(myTasks), [myTasks]);
   const overallProgress = ((myTotalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1);
 
-  if (!authLoaded) return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">初始化中...</div>;
+  if (!authLoaded) return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">載入中...</div>;
 
   if (!isLoggedIn) {
     return (
-      <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-4">
-        <form onSubmit={handleLogin} className="w-full max-w-sm bg-neutral-900 p-8 rounded-3xl border border-neutral-800 flex flex-col items-center">
-          <Activity size={48} className="mb-6 text-white" />
-          <h1 className="text-2xl font-bold mb-8">國考戰力追蹤</h1>
+      <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-4 font-sans">
+        <form onSubmit={handleLogin} className="w-full max-w-sm bg-neutral-900 p-8 rounded-3xl border border-neutral-800 flex flex-col items-center shadow-2xl">
+          <Activity size={50} className="mb-6 text-white" />
+          <h1 className="text-2xl font-bold mb-2">國考戰力系統</h1>
+          <p className="text-neutral-500 text-sm mb-8">輸入帳號即可同步雲端進度</p>
           <input 
-            type="text" placeholder="請輸入暱稱..." value={nickname} 
-            onChange={(e) => setNickname(e.target.value)}
-            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 mb-4 outline-none focus:border-white"
-            required maxLength={12}
+            type="text" placeholder="請輸入帳號 (例如學號)..." 
+            value={inputAccount} 
+            onChange={(e) => setInputAccount(e.target.value)}
+            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 mb-4 outline-none focus:border-white transition-all"
+            required 
           />
-          <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-neutral-200">登入系統</button>
+          <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-neutral-200 transition-colors">
+            登入 / 建立帳號
+          </button>
         </form>
       </div>
     );
@@ -264,20 +284,25 @@ export default function App() {
     <div className="min-h-screen bg-neutral-950 text-white pb-20 font-sans">
       <nav className="sticky top-0 z-10 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-800 px-4 py-4 flex justify-between items-center">
         <div className="flex items-center gap-3">
-          {activeSubject && <button onClick={() => setActiveSubjectId(null)} className="p-1 hover:bg-neutral-800 rounded-full"><ArrowLeft size={20}/></button>}
-          <h1 className="font-bold text-lg">{activeSubject ? activeSubject.title : "國考戰力總覽"}</h1>
+          {activeSubject && <button onClick={() => setActiveSubjectId(null)} className="p-1 hover:bg-neutral-800 rounded-full transition-colors"><ArrowLeft size={20}/></button>}
+          <h1 className="font-bold text-lg">{activeSubject ? activeSubject.title : "戰力總覽"}</h1>
         </div>
-        <button onClick={() => setShowLeaderboard(true)} className="flex items-center gap-2 bg-neutral-900 px-4 py-1.5 rounded-full border border-neutral-800 text-sm hover:bg-neutral-800">
-          <Trophy size={16} /> 排行榜
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setShowLeaderboard(true)} className="flex items-center gap-2 bg-neutral-900 px-4 py-1.5 rounded-full border border-neutral-800 text-xs hover:bg-neutral-800">
+            <Trophy size={14} /> 排行榜
+          </button>
+          <button onClick={handleLogout} className="text-neutral-500 hover:text-white transition-colors">
+             <LogOut size={18} />
+          </button>
+        </div>
       </nav>
 
       <main className="max-w-5xl mx-auto px-4 py-8">
         {!activeSubject ? (
-          <div className="animate-in fade-in duration-500">
+          <div className="animate-in fade-in zoom-in-95 duration-500">
             <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 mb-8 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-              <h2 className="text-neutral-400 mb-2 relative z-10">總體戰力達成率</h2>
+              <h2 className="text-neutral-400 text-sm mb-2 relative z-10">Hi, {account}</h2>
               <div className="text-6xl font-black mb-6 relative z-10">{overallProgress}%</div>
               <div className="w-full h-4 bg-neutral-950 rounded-full overflow-hidden relative z-10">
                 <div className="h-full bg-white transition-all duration-1000" style={{ width: `${overallProgress}%` }} />
@@ -289,14 +314,11 @@ export default function App() {
                 const p = ((calculatePoints(myTasks, subj.id) / subjTotal) * 100).toFixed(1);
                 return (
                   <div key={subj.id} onClick={() => {setActiveSubjectId(subj.id); setActiveCategoryId(subj.categories[0].id);}} className="bg-neutral-900 border border-neutral-800 p-6 rounded-2xl cursor-pointer hover:border-neutral-500 transition-all group">
-                    <h3 className="font-bold text-xl mb-6 group-hover:text-white text-neutral-200">{subj.title}</h3>
-                    <div className="flex justify-between text-xs text-neutral-400 mb-2">
-                      <span>掌握度</span>
-                      <span>{p}%</span>
+                    <h3 className="font-bold text-lg mb-6 group-hover:text-white text-neutral-300">{subj.title}</h3>
+                    <div className="w-full h-1.5 bg-neutral-950 rounded-full overflow-hidden">
+                      <div className="h-full bg-neutral-600 group-hover:bg-white transition-all duration-500" style={{ width: `${p}%` }} />
                     </div>
-                    <div className="w-full h-2 bg-neutral-950 rounded-full overflow-hidden">
-                      <div className="h-full bg-neutral-500 group-hover:bg-white transition-all duration-500" style={{ width: `${p}%` }} />
-                    </div>
+                    <div className="mt-2 text-[10px] text-neutral-500 text-right">{p}%</div>
                   </div>
                 );
               })}
@@ -306,27 +328,27 @@ export default function App() {
           <div className="animate-in slide-in-from-right duration-300">
             <div className="flex gap-2 overflow-x-auto mb-8 pb-2 scrollbar-hide">
               {activeSubject.categories.map(cat => (
-                <button key={cat.id} onClick={() => setActiveCategoryId(cat.id)} className={`px-6 py-2.5 rounded-full text-sm font-bold transition-all ${activeCategoryId === cat.id ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-400 border border-neutral-800'}`}>
+                <button key={cat.id} onClick={() => setActiveCategoryId(cat.id)} className={`px-6 py-2 rounded-full text-xs font-bold transition-all ${activeCategoryId === cat.id ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-400 border border-neutral-800'}`}>
                   {cat.title}
                 </button>
               ))}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {activeCategory.chapters.map((chap, idx) => (
-                <div key={idx} className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl flex flex-col">
-                  <div className="text-sm font-bold mb-4 flex justify-between">
+                <div key={idx} className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl flex flex-col hover:border-neutral-700 transition-colors">
+                  <div className="text-sm font-bold mb-4 flex justify-between items-start">
                     <span className="text-neutral-200">{idx + 1}. {chap}</span>
-                    <span className="text-[10px] text-neutral-500">權重: {activeCategory.chapterWeights[idx]}%</span>
+                    <span className="text-[9px] bg-neutral-800 px-2 py-1 rounded-md text-neutral-400 whitespace-nowrap ml-2">加權 {activeCategory.chapterWeights[idx]}%</span>
                   </div>
-                  <div className="mt-auto space-y-2">
+                  <div className="mt-auto space-y-1.5">
                     {activeCategory.parts.map((part, pIdx) => {
                       const key = `${activeSubject.id}_${activeCategory.id}_${idx}_${pIdx}`;
                       return (
-                        <div key={pIdx} className="flex items-center justify-between bg-neutral-950 p-2.5 rounded-xl">
-                          <span className="text-xs text-neutral-400 font-medium">{part}</span>
-                          <div className="flex gap-1.5">
+                        <div key={pIdx} className="flex items-center justify-between bg-neutral-950/50 p-2 rounded-xl border border-neutral-800/30">
+                          <span className="text-[11px] text-neutral-500 font-medium ml-1">{part}</span>
+                          <div className="flex gap-1">
                             {['skim', 'read', 'exam'].map(type => (
-                              <button key={type} onClick={() => toggleTask(`${key}_${type}`)} className={`w-8 h-8 rounded-lg text-[10px] font-bold transition-all ${myTasks.includes(`${key}_${type}`) ? 'bg-white text-black' : 'border border-neutral-800 text-neutral-500 hover:bg-neutral-800'}`}>
+                              <button key={type} onClick={() => toggleTask(`${key}_${type}`)} className={`w-8 h-8 rounded-lg text-[10px] font-bold transition-all ${myTasks.includes(`${key}_${type}`) ? 'bg-white text-black shadow-sm' : 'text-neutral-600 hover:bg-neutral-800'}`}>
                                 {type === 'skim' ? '略' : type === 'read' ? '細' : '題'}
                               </button>
                             ))}
@@ -343,22 +365,19 @@ export default function App() {
       </main>
 
       {showLeaderboard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md max-h-[75vh] overflow-hidden flex flex-col shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md max-h-[70vh] overflow-hidden flex flex-col">
             <div className="p-6 border-b border-neutral-800 flex justify-between items-center bg-neutral-950">
-              <h3 className="font-bold text-lg flex items-center gap-2"><Trophy size={22} className="text-yellow-500"/> 藥生戰力榜</h3>
+              <h3 className="font-bold flex items-center gap-2 text-lg"><Trophy size={20} className="text-yellow-500"/> 藥生戰力榜</h3>
               <button onClick={() => setShowLeaderboard(false)} className="text-neutral-500 hover:text-white">✕</button>
             </div>
             <div className="overflow-y-auto p-4 space-y-2">
-              {allUsersData.length > 0 ? allUsersData.map((u, idx) => (
-                <div key={idx} className={`flex items-center justify-between p-4 rounded-2xl ${u.nickname === nickname ? 'bg-white text-black shadow-lg scale-[1.02]' : 'bg-neutral-950 text-white'}`}>
-                  <div className="flex items-center gap-4">
-                    <span className={`font-black ${u.nickname === nickname ? 'text-black' : 'text-neutral-600'}`}>{idx + 1}</span>
-                    <span className="font-bold">{u.nickname} {u.nickname === nickname && "(你)"}</span>
-                  </div>
-                  <span className="font-black text-lg">{((u.totalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1)}%</span>
+              {allUsersData.map((u, idx) => (
+                <div key={idx} className={`flex items-center justify-between p-4 rounded-2xl ${u.nickname === account ? 'bg-white text-black' : 'bg-neutral-950'}`}>
+                  <span className="font-bold text-sm truncate max-w-[150px]">{idx + 1}. {u.nickname}</span>
+                  <span className="font-black">{((u.totalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1)}%</span>
                 </div>
-              )) : <div className="text-center py-10 text-neutral-600">暫無數據</div>}
+              ))}
             </div>
           </div>
         </div>
