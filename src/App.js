@@ -1,12 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  CheckCircle, BookOpen, Users, LogOut, ArrowLeft, Trophy, ChevronRight, Activity 
+  CheckCircle, BookOpen, Users, LogOut, ArrowLeft, Trophy, ChevronRight, Activity, Lock, Mail 
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  onAuthStateChanged, 
+  signOut 
+} from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
 
-// === 國考科目與章節資料結構 (根據 PDF 權重更新)  ===
+// === 國考科目與章節資料結構 (根據 PDF 權重) ===
 const EXAM_DATA = [
   {
     id: "s1",
@@ -109,7 +115,6 @@ const EXAM_DATA = [
 ];
 
 const TASK_WEIGHTS = { skim: 0.2, read: 0.4, exam: 0.4 };
-
 const calculateTotalGlobalPoints = () => {
   let total = 0;
   EXAM_DATA.forEach(subj => {
@@ -135,15 +140,19 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = 'exam-tracker-v1';
+const appId = 'exam-tracker-v2'; // 更新版本避免衝突
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [authLoaded, setAuthLoaded] = useState(false);
-  const [account, setAccount] = useState(() => localStorage.getItem('exam_account') || '');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [inputAccount, setInputAccount] = useState('');
   
+  // 登入表單狀態
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
   const [myTasks, setMyTasks] = useState([]);
   const [allUsersData, setAllUsersData] = useState([]);
   const [activeSubjectId, setActiveSubjectId] = useState(null);
@@ -151,39 +160,37 @@ export default function App() {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
   useEffect(() => {
-    signInAnonymously(auth).catch(err => console.error(err));
     const unsubscribe = onAuthStateChanged(auth, (usr) => {
       setUser(usr);
       setAuthLoaded(true);
-      if (account) setIsLoggedIn(true);
     });
     return () => unsubscribe();
-  }, [account]);
+  }, []);
 
   useEffect(() => {
-    if (!user || !isLoggedIn || !account) return;
+    if (!user) return;
     const progressRef = collection(db, 'artifacts', appId, 'public', 'data', 'userProgress');
     const unsubscribe = onSnapshot(progressRef, (snapshot) => {
       const users = [];
       let foundMyData = false;
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
-        if (docSnap.id === account) {
+        if (docSnap.id === user.uid) {
           setMyTasks(data.tasks || []);
           foundMyData = true;
         }
-        users.push({ nickname: docSnap.id, totalPoints: data.totalPoints || 0 });
+        users.push({ nickname: data.nickname || "匿名戰友", totalPoints: data.totalPoints || 0 });
       });
-      if (!foundMyData) {
-        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', account), {
-          tasks: [], totalPoints: 0, updatedAt: Date.now()
+      if (!foundMyData && user.email) {
+        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', user.uid), {
+          nickname: displayName || user.email.split('@')[0], tasks: [], totalPoints: 0, updatedAt: Date.now()
         }, { merge: true });
       }
       users.sort((a, b) => b.totalPoints - a.totalPoints);
       setAllUsersData(users);
     });
     return () => unsubscribe();
-  }, [user, isLoggedIn, account]);
+  }, [user]);
 
   const calculatePoints = (tasks, targetSubjId = null) => {
     let points = 0;
@@ -204,27 +211,27 @@ export default function App() {
     return points;
   };
 
-  const handleLogin = (e) => {
+  const handleAuth = async (e) => {
     e.preventDefault();
-    const cleanAccount = inputAccount.trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_');
-    if (!cleanAccount) return;
-    setAccount(cleanAccount);
-    localStorage.setItem('exam_account', cleanAccount);
-    setIsLoggedIn(true);
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('exam_account');
-    setAccount('');
-    setIsLoggedIn(false);
+    setErrorMsg('');
+    try {
+      if (isRegisterMode) {
+        await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (err) {
+      setErrorMsg("帳號密碼錯誤或格式不正確");
+    }
   };
 
   const toggleTask = async (taskId) => {
+    if (!user) return;
     const newTasks = myTasks.includes(taskId) ? myTasks.filter(t => t !== taskId) : [...myTasks, taskId];
     setMyTasks(newTasks);
     const points = calculatePoints(newTasks);
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', account), {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', user.uid), {
         tasks: newTasks, totalPoints: points, updatedAt: Date.now()
       }, { merge: true });
     } catch (err) { console.error(err); }
@@ -233,21 +240,40 @@ export default function App() {
   const myTotalPoints = useMemo(() => calculatePoints(myTasks), [myTasks]);
   const overallProgress = ((myTotalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1);
 
-  if (!authLoaded) return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">載入中...</div>;
+  if (!authLoaded) return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">安全加密載入中...</div>;
 
-  if (!isLoggedIn) {
+  if (!user) {
     return (
       <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-4">
-        <form onSubmit={handleLogin} className="w-full max-w-sm bg-neutral-900 p-8 rounded-3xl border border-neutral-800 flex flex-col items-center">
-          <Activity size={48} className="mb-6" />
-          <h1 className="text-2xl font-bold mb-4">國考戰力系統</h1>
+        <form onSubmit={handleAuth} className="w-full max-w-sm bg-neutral-900 p-8 rounded-3xl border border-neutral-800 flex flex-col shadow-2xl">
+          <div className="flex justify-center mb-6"><div className="p-4 bg-white/5 rounded-full"><Lock size={32}/></div></div>
+          <h1 className="text-2xl font-bold text-center mb-2">{isRegisterMode ? '建立國考帳號' : '戰力系統登入'}</h1>
+          <p className="text-neutral-500 text-sm text-center mb-8">{isRegisterMode ? '註冊後可永久保存進度' : '請輸入信箱密碼進行同步'}</p>
+          
+          {isRegisterMode && (
+            <input 
+              type="text" placeholder="顯示暱稱..." value={displayName} onChange={(e) => setDisplayName(e.target.value)}
+              className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 mb-4 outline-none focus:border-white" required
+            />
+          )}
           <input 
-            type="text" placeholder="請輸入帳號..." value={inputAccount} 
-            onChange={(e) => setInputAccount(e.target.value)}
-            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 mb-4 outline-none focus:border-white"
-            required 
+            type="email" placeholder="電子信箱..." value={email} onChange={(e) => setEmail(e.target.value)}
+            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 mb-4 outline-none focus:border-white" required
           />
-          <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl">登入系統</button>
+          <input 
+            type="password" placeholder="密碼 (至少6位)..." value={password} onChange={(e) => setPassword(e.target.value)}
+            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 mb-2 outline-none focus:border-white" required
+          />
+          
+          {errorMsg && <p className="text-red-500 text-xs mb-4 ml-1">{errorMsg}</p>}
+          
+          <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl mb-4 hover:bg-neutral-200 transition-colors">
+            {isRegisterMode ? '立即註冊' : '登入系統'}
+          </button>
+          
+          <button type="button" onClick={() => setIsRegisterMode(!isRegisterMode)} className="text-neutral-500 text-sm hover:text-white transition-colors">
+            {isRegisterMode ? '已有帳號？點此登入' : '還沒有帳號？點此註冊'}
+          </button>
         </form>
       </div>
     );
@@ -260,14 +286,12 @@ export default function App() {
     <div className="min-h-screen bg-neutral-950 text-white pb-20 font-sans">
       <nav className="sticky top-0 z-10 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-800 px-4 py-4 flex justify-between items-center">
         <div className="flex items-center gap-3">
-          {activeSubject && <button onClick={() => setActiveSubjectId(null)}><ArrowLeft size={20}/></button>}
+          {activeSubject && <button onClick={() => setActiveSubjectId(null)} className="p-1 hover:bg-neutral-800 rounded-full"><ArrowLeft size={20}/></button>}
           <h1 className="font-bold">{activeSubject ? activeSubject.title : "戰力總覽"}</h1>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={() => setShowLeaderboard(true)} className="flex items-center gap-2 bg-neutral-900 px-3 py-1.5 rounded-full border border-neutral-800 text-sm">
-            <Trophy size={16} /> 排行榜
-          </button>
-          <button onClick={handleLogout} className="text-neutral-500 hover:text-white"><LogOut size={18}/></button>
+          <button onClick={() => setShowLeaderboard(true)} className="flex items-center gap-2 bg-neutral-900 px-3 py-1.5 rounded-full border border-neutral-800 text-sm"><Trophy size={16} /> 排行榜</button>
+          <button onClick={() => signOut(auth)} className="text-neutral-500 hover:text-white"><LogOut size={18}/></button>
         </div>
       </nav>
 
@@ -275,7 +299,7 @@ export default function App() {
         {!activeSubject ? (
           <div>
             <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 mb-8">
-              <h2 className="text-neutral-400 mb-2">Hi, {account}</h2>
+              <h2 className="text-neutral-400 mb-2 font-medium">目前的進度</h2>
               <div className="text-5xl font-black mb-4">{overallProgress}%</div>
               <div className="w-full h-3 bg-neutral-950 rounded-full overflow-hidden">
                 <div className="h-full bg-white transition-all duration-1000" style={{ width: `${overallProgress}%` }} />
@@ -288,10 +312,10 @@ export default function App() {
                 return (
                   <div key={subj.id} onClick={() => {setActiveSubjectId(subj.id); setActiveCategoryId(subj.categories[0].id);}} className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl cursor-pointer hover:border-white transition-all">
                     <h3 className="font-bold mb-4">{subj.title}</h3>
-                    <div className="w-full h-1.5 bg-neutral-950 rounded-full overflow-hidden">
+                    <div className="w-full h-1 bg-neutral-950 rounded-full overflow-hidden mb-2">
                       <div className="h-full bg-neutral-400" style={{ width: `${p}%` }} />
                     </div>
-                    <div className="mt-2 text-[10px] text-neutral-500 text-right">{p}%</div>
+                    <div className="text-[10px] text-neutral-500 text-right font-mono">{p}%</div>
                   </div>
                 );
               })}
@@ -299,7 +323,7 @@ export default function App() {
           </div>
         ) : (
           <div>
-            <div className="flex gap-2 overflow-x-auto mb-6 pb-2">
+            <div className="flex gap-2 overflow-x-auto mb-6 pb-2 scrollbar-hide">
               {activeSubject.categories.map(cat => (
                 <button key={cat.id} onClick={() => setActiveCategoryId(cat.id)} className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${activeCategoryId === cat.id ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-400 border border-neutral-800'}`}>
                   {cat.title}
@@ -311,7 +335,7 @@ export default function App() {
                 <div key={idx} className="bg-neutral-900 border border-neutral-800 p-4 rounded-2xl flex flex-col">
                   <div className="text-sm font-bold mb-3 flex justify-between">
                     <span>{idx + 1}. {chap}</span>
-                    <span className="text-[10px] text-neutral-500">{activeCategory.chapterWeights[idx]}%</span>
+                    <span className="text-[9px] text-neutral-500 bg-neutral-950 px-2 py-0.5 rounded-full">{activeCategory.chapterWeights[idx]}%</span>
                   </div>
                   <div className="mt-auto space-y-1.5">
                     {activeCategory.parts.map((part, pIdx) => {
@@ -321,7 +345,7 @@ export default function App() {
                           <span className="text-[11px] text-neutral-500 font-medium ml-1">{part}</span>
                           <div className="flex gap-1">
                             {['skim', 'read', 'exam'].map(type => (
-                              <button key={type} onClick={() => toggleTask(`${key}_${type}`)} className={`w-8 h-8 rounded-lg text-[10px] font-bold transition-all ${myTasks.includes(`${key}_${type}`) ? 'bg-white text-black' : 'border border-neutral-800 text-neutral-500 hover:bg-neutral-800'}`}>
+                              <button key={type} onClick={() => toggleTask(`${key}_${type}`)} className={`w-8 h-8 rounded-lg text-[10px] font-bold transition-all ${myTasks.includes(`${key}_${type}`) ? 'bg-white text-black' : 'text-neutral-600 hover:text-white'}`}>
                                 {type === 'skim' ? '略' : type === 'read' ? '細' : '題'}
                               </button>
                             ))}
@@ -338,17 +362,17 @@ export default function App() {
       </main>
 
       {showLeaderboard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md max-h-[70vh] overflow-hidden flex flex-col shadow-2xl">
             <div className="p-5 border-b border-neutral-800 flex justify-between items-center bg-neutral-950">
-              <h3 className="font-bold flex items-center gap-2"><Trophy size={20}/> 戰力排行榜</h3>
+              <h3 className="font-bold flex items-center gap-2"><Trophy size={20} className="text-yellow-500"/> 國考戰力榜</h3>
               <button onClick={() => setShowLeaderboard(false)}>✕</button>
             </div>
-            <div className="overflow-y-auto p-2">
+            <div className="overflow-y-auto p-4 space-y-2">
               {allUsersData.map((u, idx) => (
-                <div key={idx} className={`flex items-center justify-between p-4 rounded-2xl mb-1 ${u.nickname === account ? 'bg-white text-black' : 'text-white'}`}>
-                  <span>{idx + 1}. {u.nickname}</span>
-                  <span className="font-black">{((u.totalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1)}%</span>
+                <div key={idx} className={`flex items-center justify-between p-4 rounded-2xl ${allUsersData[idx].nickname === (displayName || user.email.split('@')[0]) ? 'bg-white text-black' : 'bg-neutral-950 text-white'}`}>
+                  <span className="font-bold text-sm truncate max-w-[150px]">{idx + 1}. {u.nickname}</span>
+                  <span className="font-black text-lg">{((u.totalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1)}%</span>
                 </div>
               ))}
             </div>
