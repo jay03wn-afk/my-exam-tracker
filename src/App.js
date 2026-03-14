@@ -4,9 +4,9 @@ import {
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
+import { getFirestore, collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
-// === 國考科目與章節資料結構 (權重來源：PDF 文件) ===
+// === 國考科目與章節資料結構 (根據 PDF 權重更新)  ===
 const EXAM_DATA = [
   {
     id: "s1",
@@ -50,7 +50,7 @@ const EXAM_DATA = [
           "薄層層析法(TLC)", "高效能液相層析法(HPLC)", "氣相層析法(GC)", "超臨界流體層析法(SFC)", 
           "萃取法", "毛細管電泳(CE)", "質譜儀分析法(MS)", "光譜概論", "紫外光與可見光譜(UV/VIS)", 
           "紅外光譜(IR)", "螢光光譜(FLUOR)", "拉曼光譜", "原子光譜(AES/AAS)", "旋光度測定法", 
-          "折光率測定法", "核磁共振光譜測定(NMR)", "生物製劑品品管分析"
+          "折光率測定法", "核磁共振光譜測定(NMR)", "生物製劑品管分析"
         ]
       },
       {
@@ -108,7 +108,7 @@ const EXAM_DATA = [
   }
 ];
 
-const TASK_WEIGHTS = { skim: 20, read: 40, exam: 40 };
+const TASK_WEIGHTS = { skim: 0.2, read: 0.4, exam: 0.4 };
 
 const calculateTotalGlobalPoints = () => {
   let total = 0;
@@ -140,12 +140,8 @@ const appId = 'exam-tracker-v1';
 export default function App() {
   const [user, setUser] = useState(null);
   const [authLoaded, setAuthLoaded] = useState(false);
-  
-  // 帳號與登入狀態
   const [account, setAccount] = useState(() => localStorage.getItem('exam_account') || '');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  
-  // 輸入框暫存 (避免打字時觸發監聽)
   const [inputAccount, setInputAccount] = useState('');
   
   const [myTasks, setMyTasks] = useState([]);
@@ -154,9 +150,8 @@ export default function App() {
   const [activeCategoryId, setActiveCategoryId] = useState(null);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
-  // 1. 初始身份認證
   useEffect(() => {
-    signInAnonymously(auth).catch(err => console.error("Auth init fail:", err));
+    signInAnonymously(auth).catch(err => console.error(err));
     const unsubscribe = onAuthStateChanged(auth, (usr) => {
       setUser(usr);
       setAuthLoaded(true);
@@ -165,38 +160,28 @@ export default function App() {
     return () => unsubscribe();
   }, [account]);
 
-  // 2. 只有在登入成功且有帳號後，才開啟 Firebase 監聽
   useEffect(() => {
     if (!user || !isLoggedIn || !account) return;
-
     const progressRef = collection(db, 'artifacts', appId, 'public', 'data', 'userProgress');
     const unsubscribe = onSnapshot(progressRef, (snapshot) => {
       const users = [];
       let foundMyData = false;
-      
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
         if (docSnap.id === account) {
           setMyTasks(data.tasks || []);
           foundMyData = true;
         }
-        users.push({
-          nickname: docSnap.id,
-          totalPoints: data.totalPoints || 0
-        });
+        users.push({ nickname: docSnap.id, totalPoints: data.totalPoints || 0 });
       });
-
-      // 若為新帳號，初始化
       if (!foundMyData) {
         setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', account), {
           tasks: [], totalPoints: 0, updatedAt: Date.now()
         }, { merge: true });
       }
-
       users.sort((a, b) => b.totalPoints - a.totalPoints);
       setAllUsersData(users);
-    }, (err) => console.error("Firestore error:", err));
-
+    });
     return () => unsubscribe();
   }, [user, isLoggedIn, account]);
 
@@ -208,11 +193,10 @@ export default function App() {
         cat.chapters.forEach((_, chapIdx) => {
           cat.parts.forEach((_, partIdx) => {
             const weight = cat.chapterWeights ? cat.chapterWeights[chapIdx] : 1;
-            const baseKey = `${subj.id}_${cat.id}_${idx}_${partIdx}`; // 注意這裡 idx 改回 chapIdx
-            const realKey = `${subj.id}_${cat.id}_${chapIdx}_${partIdx}`;
-            if (tasks.includes(`${realKey}_skim`)) points += weight * 0.2;
-            if (tasks.includes(`${realKey}_read`)) points += weight * 0.4;
-            if (tasks.includes(`${realKey}_exam`)) points += weight * 0.4;
+            const baseKey = `${subj.id}_${cat.id}_${chapIdx}_${partIdx}`;
+            if (tasks.includes(`${baseKey}_skim`)) points += weight * TASK_WEIGHTS.skim;
+            if (tasks.includes(`${baseKey}_read`)) points += weight * TASK_WEIGHTS.read;
+            if (tasks.includes(`${baseKey}_exam`)) points += weight * TASK_WEIGHTS.exam;
           });
         });
       });
@@ -223,10 +207,7 @@ export default function App() {
   const handleLogin = (e) => {
     e.preventDefault();
     const cleanAccount = inputAccount.trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_');
-    if (!cleanAccount || cleanAccount.length < 2) {
-      alert("帳號長度不足或包含非法字元");
-      return;
-    }
+    if (!cleanAccount) return;
     setAccount(cleanAccount);
     localStorage.setItem('exam_account', cleanAccount);
     setIsLoggedIn(true);
@@ -236,7 +217,6 @@ export default function App() {
     localStorage.removeItem('exam_account');
     setAccount('');
     setIsLoggedIn(false);
-    setMyTasks([]);
   };
 
   const toggleTask = async (taskId) => {
@@ -247,7 +227,7 @@ export default function App() {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', account), {
         tasks: newTasks, totalPoints: points, updatedAt: Date.now()
       }, { merge: true });
-    } catch (err) { console.error("Update fail:", err); }
+    } catch (err) { console.error(err); }
   };
 
   const myTotalPoints = useMemo(() => calculatePoints(myTasks), [myTasks]);
@@ -257,21 +237,17 @@ export default function App() {
 
   if (!isLoggedIn) {
     return (
-      <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-4 font-sans">
-        <form onSubmit={handleLogin} className="w-full max-w-sm bg-neutral-900 p-8 rounded-3xl border border-neutral-800 flex flex-col items-center shadow-2xl">
-          <Activity size={50} className="mb-6 text-white" />
-          <h1 className="text-2xl font-bold mb-2">國考戰力系統</h1>
-          <p className="text-neutral-500 text-sm mb-8">輸入帳號即可同步雲端進度</p>
+      <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-4">
+        <form onSubmit={handleLogin} className="w-full max-w-sm bg-neutral-900 p-8 rounded-3xl border border-neutral-800 flex flex-col items-center">
+          <Activity size={48} className="mb-6" />
+          <h1 className="text-2xl font-bold mb-4">國考戰力系統</h1>
           <input 
-            type="text" placeholder="請輸入帳號 (例如學號)..." 
-            value={inputAccount} 
+            type="text" placeholder="請輸入帳號..." value={inputAccount} 
             onChange={(e) => setInputAccount(e.target.value)}
-            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 mb-4 outline-none focus:border-white transition-all"
+            className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 mb-4 outline-none focus:border-white"
             required 
           />
-          <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-neutral-200 transition-colors">
-            登入 / 建立帳號
-          </button>
+          <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl">登入系統</button>
         </form>
       </div>
     );
@@ -284,39 +260,36 @@ export default function App() {
     <div className="min-h-screen bg-neutral-950 text-white pb-20 font-sans">
       <nav className="sticky top-0 z-10 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-800 px-4 py-4 flex justify-between items-center">
         <div className="flex items-center gap-3">
-          {activeSubject && <button onClick={() => setActiveSubjectId(null)} className="p-1 hover:bg-neutral-800 rounded-full transition-colors"><ArrowLeft size={20}/></button>}
-          <h1 className="font-bold text-lg">{activeSubject ? activeSubject.title : "戰力總覽"}</h1>
+          {activeSubject && <button onClick={() => setActiveSubjectId(null)}><ArrowLeft size={20}/></button>}
+          <h1 className="font-bold">{activeSubject ? activeSubject.title : "戰力總覽"}</h1>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={() => setShowLeaderboard(true)} className="flex items-center gap-2 bg-neutral-900 px-4 py-1.5 rounded-full border border-neutral-800 text-xs hover:bg-neutral-800">
-            <Trophy size={14} /> 排行榜
+          <button onClick={() => setShowLeaderboard(true)} className="flex items-center gap-2 bg-neutral-900 px-3 py-1.5 rounded-full border border-neutral-800 text-sm">
+            <Trophy size={16} /> 排行榜
           </button>
-          <button onClick={handleLogout} className="text-neutral-500 hover:text-white transition-colors">
-             <LogOut size={18} />
-          </button>
+          <button onClick={handleLogout} className="text-neutral-500 hover:text-white"><LogOut size={18}/></button>
         </div>
       </nav>
 
       <main className="max-w-5xl mx-auto px-4 py-8">
         {!activeSubject ? (
-          <div className="animate-in fade-in zoom-in-95 duration-500">
-            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 mb-8 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
-              <h2 className="text-neutral-400 text-sm mb-2 relative z-10">Hi, {account}</h2>
-              <div className="text-6xl font-black mb-6 relative z-10">{overallProgress}%</div>
-              <div className="w-full h-4 bg-neutral-950 rounded-full overflow-hidden relative z-10">
+          <div>
+            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 mb-8">
+              <h2 className="text-neutral-400 mb-2">Hi, {account}</h2>
+              <div className="text-5xl font-black mb-4">{overallProgress}%</div>
+              <div className="w-full h-3 bg-neutral-950 rounded-full overflow-hidden">
                 <div className="h-full bg-white transition-all duration-1000" style={{ width: `${overallProgress}%` }} />
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {EXAM_DATA.map(subj => {
                 const subjTotal = subj.categories.reduce((acc, cat) => acc + (cat.chapterWeights ? cat.chapterWeights.reduce((a, b) => a + b, 0) : cat.chapters.length) * cat.parts.length, 0);
                 const p = ((calculatePoints(myTasks, subj.id) / subjTotal) * 100).toFixed(1);
                 return (
-                  <div key={subj.id} onClick={() => {setActiveSubjectId(subj.id); setActiveCategoryId(subj.categories[0].id);}} className="bg-neutral-900 border border-neutral-800 p-6 rounded-2xl cursor-pointer hover:border-neutral-500 transition-all group">
-                    <h3 className="font-bold text-lg mb-6 group-hover:text-white text-neutral-300">{subj.title}</h3>
+                  <div key={subj.id} onClick={() => {setActiveSubjectId(subj.id); setActiveCategoryId(subj.categories[0].id);}} className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl cursor-pointer hover:border-white transition-all">
+                    <h3 className="font-bold mb-4">{subj.title}</h3>
                     <div className="w-full h-1.5 bg-neutral-950 rounded-full overflow-hidden">
-                      <div className="h-full bg-neutral-600 group-hover:bg-white transition-all duration-500" style={{ width: `${p}%` }} />
+                      <div className="h-full bg-neutral-400" style={{ width: `${p}%` }} />
                     </div>
                     <div className="mt-2 text-[10px] text-neutral-500 text-right">{p}%</div>
                   </div>
@@ -325,30 +298,30 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div className="animate-in slide-in-from-right duration-300">
-            <div className="flex gap-2 overflow-x-auto mb-8 pb-2 scrollbar-hide">
+          <div>
+            <div className="flex gap-2 overflow-x-auto mb-6 pb-2">
               {activeSubject.categories.map(cat => (
-                <button key={cat.id} onClick={() => setActiveCategoryId(cat.id)} className={`px-6 py-2 rounded-full text-xs font-bold transition-all ${activeCategoryId === cat.id ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-400 border border-neutral-800'}`}>
+                <button key={cat.id} onClick={() => setActiveCategoryId(cat.id)} className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${activeCategoryId === cat.id ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-400 border border-neutral-800'}`}>
                   {cat.title}
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {activeCategory.chapters.map((chap, idx) => (
-                <div key={idx} className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl flex flex-col hover:border-neutral-700 transition-colors">
-                  <div className="text-sm font-bold mb-4 flex justify-between items-start">
-                    <span className="text-neutral-200">{idx + 1}. {chap}</span>
-                    <span className="text-[9px] bg-neutral-800 px-2 py-1 rounded-md text-neutral-400 whitespace-nowrap ml-2">加權 {activeCategory.chapterWeights[idx]}%</span>
+                <div key={idx} className="bg-neutral-900 border border-neutral-800 p-4 rounded-2xl flex flex-col">
+                  <div className="text-sm font-bold mb-3 flex justify-between">
+                    <span>{idx + 1}. {chap}</span>
+                    <span className="text-[10px] text-neutral-500">{activeCategory.chapterWeights[idx]}%</span>
                   </div>
                   <div className="mt-auto space-y-1.5">
                     {activeCategory.parts.map((part, pIdx) => {
                       const key = `${activeSubject.id}_${activeCategory.id}_${idx}_${pIdx}`;
                       return (
-                        <div key={pIdx} className="flex items-center justify-between bg-neutral-950/50 p-2 rounded-xl border border-neutral-800/30">
+                        <div key={pIdx} className="flex items-center justify-between bg-neutral-950 p-2 rounded-xl">
                           <span className="text-[11px] text-neutral-500 font-medium ml-1">{part}</span>
                           <div className="flex gap-1">
                             {['skim', 'read', 'exam'].map(type => (
-                              <button key={type} onClick={() => toggleTask(`${key}_${type}`)} className={`w-8 h-8 rounded-lg text-[10px] font-bold transition-all ${myTasks.includes(`${key}_${type}`) ? 'bg-white text-black shadow-sm' : 'text-neutral-600 hover:bg-neutral-800'}`}>
+                              <button key={type} onClick={() => toggleTask(`${key}_${type}`)} className={`w-8 h-8 rounded-lg text-[10px] font-bold transition-all ${myTasks.includes(`${key}_${type}`) ? 'bg-white text-black' : 'border border-neutral-800 text-neutral-500 hover:bg-neutral-800'}`}>
                                 {type === 'skim' ? '略' : type === 'read' ? '細' : '題'}
                               </button>
                             ))}
@@ -365,16 +338,16 @@ export default function App() {
       </main>
 
       {showLeaderboard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md max-h-[70vh] overflow-hidden flex flex-col">
-            <div className="p-6 border-b border-neutral-800 flex justify-between items-center bg-neutral-950">
-              <h3 className="font-bold flex items-center gap-2 text-lg"><Trophy size={20} className="text-yellow-500"/> 藥生戰力榜</h3>
-              <button onClick={() => setShowLeaderboard(false)} className="text-neutral-500 hover:text-white">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-5 border-b border-neutral-800 flex justify-between items-center bg-neutral-950">
+              <h3 className="font-bold flex items-center gap-2"><Trophy size={20}/> 戰力排行榜</h3>
+              <button onClick={() => setShowLeaderboard(false)}>✕</button>
             </div>
-            <div className="overflow-y-auto p-4 space-y-2">
+            <div className="overflow-y-auto p-2">
               {allUsersData.map((u, idx) => (
-                <div key={idx} className={`flex items-center justify-between p-4 rounded-2xl ${u.nickname === account ? 'bg-white text-black' : 'bg-neutral-950'}`}>
-                  <span className="font-bold text-sm truncate max-w-[150px]">{idx + 1}. {u.nickname}</span>
+                <div key={idx} className={`flex items-center justify-between p-4 rounded-2xl mb-1 ${u.nickname === account ? 'bg-white text-black' : 'text-white'}`}>
+                  <span>{idx + 1}. {u.nickname}</span>
                   <span className="font-black">{((u.totalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1)}%</span>
                 </div>
               ))}
