@@ -6,7 +6,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
-// === 國考科目與章節資料結構 ===
+// === 國考科目與章節資料結構 (權重來源：PDF 文件) ===
 const EXAM_DATA = [
   {
     id: "s1",
@@ -16,6 +16,11 @@ const EXAM_DATA = [
         id: "s1_c1",
         title: "全範圍",
         parts: ["藥理", "藥化"],
+        // 來源 
+        chapterWeights: [
+          8.8, 3.2, 3.9, 0.4, 2.2, 3.0, 0.6, 1.1, 2.8, 2.4, 1.9, 0.9, 3.6, 3.2, 0.2, 1.7, 1.3, 1.5, 1.5, 0.2,
+          3.0, 3.9, 2.8, 3.6, 1.5, 0.7, 1.9, 2.4, 0.6, 1.7, 1.3, 2.8, 5.0, 1.5, 1.9, 7.3, 2.8, 0.4
+        ],
         chapters: [
           "藥效學/藥動學", "擬交感神經藥", "擬副交感神經藥", "鴉片類/中樞神經藥", "局部/全身麻醉藥", 
           "鎮靜安眠藥", "抗焦慮藥", "神經肌肉疾病", "抗癲癇藥", "抗憂鬱/抗躁鬱", "抗精神藥", 
@@ -35,6 +40,11 @@ const EXAM_DATA = [
         id: "s2_c1",
         title: "藥物分析學",
         parts: ["藥分"],
+        // 來源 [cite: 5, 6]
+        chapterWeights: [
+          3.66, 1.93, 1.16, 1.35, 0.58, 3.47, 0.87, 0.29, 1.35, 2.50, 0.77, 1.83, 1.73, 0.58, 0.96, 1.83, 2.50,
+          5.59, 2.22, 10.12, 5.30, 0.67, 3.28, 3.56, 5.59, 8.00, 2.89, 8.86, 4.34, 2.60, 0.87, 2.70, 1.83, 8.75, 0.10
+        ],
         chapters: [
           "基礎概念", "水溶液概論", "滴定分析概論", "酸滴定", "鹼滴定", "非水滴定", "沉澱滴定", 
           "錯合滴定", "氧化還原滴定", "水分測定法", "灰分測定法", "脂肪測定法", "揮發油測定法", 
@@ -42,13 +52,15 @@ const EXAM_DATA = [
           "薄層層析法(TLC)", "高效能液相層析法(HPLC)", "氣相層析法(GC)", "超臨界流體層析法(SFC)", 
           "萃取法", "毛細管電泳(CE)", "質譜儀分析法(MS)", "光譜概論", "紫外光與可見光譜(UV/VIS)", 
           "紅外光譜(IR)", "螢光光譜(FLUOR)", "拉曼光譜", "原子光譜(AES/AAS)", "旋光度測定法", 
-          "折光率測定法", "核磁共振光譜測定(NMR)", "生物製劑品管分析"
+          "折光率測定法", "核磁共振光譜測定(NMR)", "生物製劑品品管分析"
         ]
       },
       {
         id: "s2_c2",
         title: "生藥學",
         parts: ["生藥"],
+        // 來源 [cite: 8]
+        chapterWeights: [28.8, 17.3, 9.6, 7.7, 7.7, 5.8, 5.8, 5.8, 5.8, 3.8, 1.9, 0.1],
         chapters: [
           "生物鹼", "配醣體", "揮發油", "苯丙烷", "萜類", "強心苷", 
           "碳水化合物", "單寧", "樹脂", "脂質", "類固醇", "緒論"
@@ -58,6 +70,8 @@ const EXAM_DATA = [
         id: "s2_c3",
         title: "中藥學",
         parts: ["中藥"],
+        // 來源 [cite: 10]
+        chapterWeights: [21.6, 15.4, 9.9, 7.4, 6.2, 6.2, 4.9, 4.9, 4.3, 3.7, 3.1, 3.1, 2.5, 1.9, 1.9, 1.2, 0.6, 0.6, 0.6],
         chapters: [
           "補虛藥", "清熱藥", "解表藥", "化痰止咳平喘", "利水滲濕藥", "活血祛瘀藥", 
           "祛風濕藥", "理氣藥", "止血藥", "安神藥", "收澀藥", "平肝息風藥", "攻下藥", 
@@ -74,6 +88,10 @@ const EXAM_DATA = [
         id: "s3_c1",
         title: "藥劑學",
         parts: ["藥劑"],
+        // 來源 [cite: 12]
+        chapterWeights: [
+          4.17, 0.83, 3.33, 1.67, 1.67, 2.50, 5.83, 2.50, 3.33, 5.00, 5.00, 2.50, 7.50, 1.67, 2.50, 1.67, 3.33, 7.50, 4.17, 1.67
+        ],
         chapters: [
           "大雜燴(總論)", "芳香水劑", "溶液劑", "糖漿劑", "醋劑/酊劑", "流浸膏劑/浸膏劑/浸劑", 
           "膠體/界面活性劑", "流變", "浮劑/洗劑(懸浮劑)", "乳劑", "軟膏劑", "凝膠/乳糜/乳霜/糊劑", 
@@ -84,6 +102,8 @@ const EXAM_DATA = [
         id: "s3_c2",
         title: "生物藥劑學",
         parts: ["生藥劑"],
+        // 來源 [cite: 12]
+        chapterWeights: [1.67, 0.83, 4.17, 1.67, 1.67, 1.67, 5.00, 5.00, 3.33, 2.50, 4.17],
         chapters: [
           "緒論", "藥物動力學模型", "I.V. (一室、二室)", "E.V. (一室、二室)", 
           "I.V. infusion/多劑量給藥", "非線性藥物動力學", "藥物吸收", 
@@ -95,19 +115,22 @@ const EXAM_DATA = [
 ];
 
 const TASK_WEIGHTS = { skim: 20, read: 40, exam: 40 };
-let GLOBAL_TOTAL_POINTS = 0;
-const SUBJECT_TOTAL_POINTS = {};
 
-EXAM_DATA.forEach(subj => {
-  let subjPoints = 0;
-  subj.categories.forEach(cat => {
-    subjPoints += cat.chapters.length * cat.parts.length * 100;
+// === 計算總分的邏輯 ===
+const calculateTotalGlobalPoints = () => {
+  let total = 0;
+  EXAM_DATA.forEach(subj => {
+    subj.categories.forEach(cat => {
+      const catWeightSum = cat.chapterWeights ? cat.chapterWeights.reduce((a, b) => a + b, 0) : cat.chapters.length;
+      total += catWeightSum * cat.parts.length;
+    });
   });
-  SUBJECT_TOTAL_POINTS[subj.id] = subjPoints;
-  GLOBAL_TOTAL_POINTS += subjPoints;
-});
+  return total;
+};
 
-// === Firebase 初始化 ===
+const GLOBAL_TOTAL_POINTS = calculateTotalGlobalPoints();
+
+// === Firebase 設定 ===
 const firebaseConfig = {
   apiKey: "AIzaSyBwPNXg4zU8R2rjt0AxqBVz62rDY4aOBOE",
   authDomain: "exam-tracker-ae31d.firebaseapp.com",
@@ -135,7 +158,7 @@ export default function App() {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
   useEffect(() => {
-    signInAnonymously(auth).catch(err => console.error("Auth error:", err));
+    signInAnonymously(auth).catch(err => console.error(err));
     const unsubscribe = onAuthStateChanged(auth, (usr) => {
       setUser(usr);
       setAuthLoaded(true);
@@ -158,8 +181,7 @@ export default function App() {
         }
         users.push({
           nickname: docSnap.id,
-          totalPoints: data.totalPoints || 0,
-          updatedAt: data.updatedAt || 0
+          totalPoints: data.totalPoints || 0
         });
       });
       if (!foundMyData) {
@@ -173,6 +195,25 @@ export default function App() {
     return () => unsubscribe();
   }, [user, isLoggedIn, nickname]);
 
+  const calculatePoints = (tasks, targetSubjId = null) => {
+    let points = 0;
+    EXAM_DATA.forEach(subj => {
+      if (targetSubjId && subj.id !== targetSubjId) return;
+      subj.categories.forEach(cat => {
+        cat.chapters.forEach((_, chapIdx) => {
+          cat.parts.forEach((_, partIdx) => {
+            const weight = cat.chapterWeights ? cat.chapterWeights[chapIdx] : 1;
+            const baseKey = `${subj.id}_${cat.id}_${chapIdx}_${partIdx}`;
+            if (tasks.includes(`${baseKey}_skim`)) points += weight * (TASK_WEIGHTS.skim / 100);
+            if (tasks.includes(`${baseKey}_read`)) points += weight * (TASK_WEIGHTS.read / 100);
+            if (tasks.includes(`${baseKey}_exam`)) points += weight * (TASK_WEIGHTS.exam / 100);
+          });
+        });
+      });
+    });
+    return points;
+  };
+
   const handleLogin = (e) => {
     e.preventDefault();
     const nameStr = nickname.trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_');
@@ -185,48 +226,32 @@ export default function App() {
   const toggleTask = async (taskId) => {
     const newTasks = myTasks.includes(taskId) ? myTasks.filter(t => t !== taskId) : [...myTasks, taskId];
     setMyTasks(newTasks);
-    let points = 0;
-    newTasks.forEach(t => {
-      if (t.endsWith('_skim')) points += TASK_WEIGHTS.skim;
-      if (t.endsWith('_read')) points += TASK_WEIGHTS.read;
-      if (t.endsWith('_exam')) points += TASK_WEIGHTS.exam;
-    });
+    const points = calculatePoints(newTasks);
     try {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'userProgress', nickname), {
         tasks: newTasks, totalPoints: points, updatedAt: Date.now()
       }, { merge: true });
-    } catch (err) { console.error("Save error:", err); }
-  };
-
-  const calculatePoints = (tasks, subjectId = null) => {
-    let points = 0;
-    tasks.forEach(t => {
-      if (subjectId && !t.startsWith(`${subjectId}_`)) return;
-      if (t.endsWith('_skim')) points += TASK_WEIGHTS.skim;
-      if (t.endsWith('_read')) points += TASK_WEIGHTS.read;
-      if (t.endsWith('_exam')) points += TASK_WEIGHTS.exam;
-    });
-    return points;
+    } catch (err) { console.error(err); }
   };
 
   const myTotalPoints = useMemo(() => calculatePoints(myTasks), [myTasks]);
   const overallProgress = ((myTotalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1);
 
-  if (!authLoaded) return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">載入中...</div>;
+  if (!authLoaded) return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">初始化中...</div>;
 
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-4">
         <form onSubmit={handleLogin} className="w-full max-w-sm bg-neutral-900 p-8 rounded-3xl border border-neutral-800 flex flex-col items-center">
-          <BookOpen size={48} className="mb-6" />
-          <h1 className="text-2xl font-bold mb-8">國考進度追蹤</h1>
+          <Activity size={48} className="mb-6 text-white" />
+          <h1 className="text-2xl font-bold mb-8">國考戰力追蹤</h1>
           <input 
-            type="text" placeholder="輸入暱稱..." value={nickname} 
+            type="text" placeholder="請輸入暱稱..." value={nickname} 
             onChange={(e) => setNickname(e.target.value)}
             className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 mb-4 outline-none focus:border-white"
-            required maxLength={15}
+            required maxLength={12}
           />
-          <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl">開始使用</button>
+          <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-neutral-200">登入系統</button>
         </form>
       </div>
     );
@@ -236,36 +261,41 @@ export default function App() {
   const activeCategory = activeSubject?.categories.find(c => c.id === activeCategoryId) || activeSubject?.categories[0];
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-white pb-20">
+    <div className="min-h-screen bg-neutral-950 text-white pb-20 font-sans">
       <nav className="sticky top-0 z-10 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-800 px-4 py-4 flex justify-between items-center">
         <div className="flex items-center gap-3">
-          {activeSubject && <button onClick={() => setActiveSubjectId(null)}><ArrowLeft size={20}/></button>}
-          <h1 className="font-bold">{activeSubject ? activeSubject.title : "國考總覽"}</h1>
+          {activeSubject && <button onClick={() => setActiveSubjectId(null)} className="p-1 hover:bg-neutral-800 rounded-full"><ArrowLeft size={20}/></button>}
+          <h1 className="font-bold text-lg">{activeSubject ? activeSubject.title : "國考戰力總覽"}</h1>
         </div>
-        <button onClick={() => setShowLeaderboard(true)} className="flex items-center gap-2 bg-neutral-900 px-3 py-1.5 rounded-full border border-neutral-800 text-sm">
+        <button onClick={() => setShowLeaderboard(true)} className="flex items-center gap-2 bg-neutral-900 px-4 py-1.5 rounded-full border border-neutral-800 text-sm hover:bg-neutral-800">
           <Trophy size={16} /> 排行榜
         </button>
       </nav>
 
       <main className="max-w-5xl mx-auto px-4 py-8">
         {!activeSubject ? (
-          <div>
-            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 mb-8">
-              <h2 className="text-neutral-400 mb-2">總完成進度</h2>
-              <div className="text-5xl font-black mb-4">{overallProgress}%</div>
-              <div className="w-full h-3 bg-neutral-950 rounded-full overflow-hidden">
-                <div className="h-full bg-white" style={{ width: `${overallProgress}%` }} />
+          <div className="animate-in fade-in duration-500">
+            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-8 mb-8 relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+              <h2 className="text-neutral-400 mb-2 relative z-10">總體戰力達成率</h2>
+              <div className="text-6xl font-black mb-6 relative z-10">{overallProgress}%</div>
+              <div className="w-full h-4 bg-neutral-950 rounded-full overflow-hidden relative z-10">
+                <div className="h-full bg-white transition-all duration-1000" style={{ width: `${overallProgress}%` }} />
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {EXAM_DATA.map(subj => {
-                const p = ((calculatePoints(myTasks, subj.id) / SUBJECT_TOTAL_POINTS[subj.id]) * 100).toFixed(1);
+                const subjTotal = subj.categories.reduce((acc, cat) => acc + (cat.chapterWeights ? cat.chapterWeights.reduce((a, b) => a + b, 0) : cat.chapters.length) * cat.parts.length, 0);
+                const p = ((calculatePoints(myTasks, subj.id) / subjTotal) * 100).toFixed(1);
                 return (
-                  <div key={subj.id} onClick={() => {setActiveSubjectId(subj.id); setActiveCategoryId(subj.categories[0].id);}} className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl cursor-pointer hover:border-white transition-all">
-                    <h3 className="font-bold mb-4">{subj.title}</h3>
-                    <div className="text-xs text-neutral-400 mb-1">進度 {p}%</div>
-                    <div className="w-full h-1.5 bg-neutral-950 rounded-full overflow-hidden">
-                      <div className="h-full bg-neutral-400" style={{ width: `${p}%` }} />
+                  <div key={subj.id} onClick={() => {setActiveSubjectId(subj.id); setActiveCategoryId(subj.categories[0].id);}} className="bg-neutral-900 border border-neutral-800 p-6 rounded-2xl cursor-pointer hover:border-neutral-500 transition-all group">
+                    <h3 className="font-bold text-xl mb-6 group-hover:text-white text-neutral-200">{subj.title}</h3>
+                    <div className="flex justify-between text-xs text-neutral-400 mb-2">
+                      <span>掌握度</span>
+                      <span>{p}%</span>
+                    </div>
+                    <div className="w-full h-2 bg-neutral-950 rounded-full overflow-hidden">
+                      <div className="h-full bg-neutral-500 group-hover:bg-white transition-all duration-500" style={{ width: `${p}%` }} />
                     </div>
                   </div>
                 );
@@ -273,33 +303,38 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div>
-            <div className="flex gap-2 overflow-x-auto mb-6">
+          <div className="animate-in slide-in-from-right duration-300">
+            <div className="flex gap-2 overflow-x-auto mb-8 pb-2 scrollbar-hide">
               {activeSubject.categories.map(cat => (
-                <button key={cat.id} onClick={() => setActiveCategoryId(cat.id)} className={`px-4 py-2 rounded-full text-sm ${activeCategoryId === cat.id ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-400'}`}>
+                <button key={cat.id} onClick={() => setActiveCategoryId(cat.id)} className={`px-6 py-2.5 rounded-full text-sm font-bold transition-all ${activeCategoryId === cat.id ? 'bg-white text-black' : 'bg-neutral-900 text-neutral-400 border border-neutral-800'}`}>
                   {cat.title}
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {activeCategory.chapters.map((chap, idx) => (
-                <div key={idx} className="bg-neutral-900 border border-neutral-800 p-4 rounded-2xl">
-                  <div className="text-sm font-bold mb-3">{idx + 1}. {chap}</div>
-                  {activeCategory.parts.map((part, pIdx) => {
-                    const key = `${activeSubject.id}_${activeCategory.id}_${idx}_${pIdx}`;
-                    return (
-                      <div key={pIdx} className="flex items-center justify-between bg-neutral-950 p-2 rounded-xl mb-1">
-                        <span className="text-xs text-neutral-500">{part}</span>
-                        <div className="flex gap-1">
-                          {['skim', 'read', 'exam'].map(type => (
-                            <button key={type} onClick={() => toggleTask(`${key}_${type}`)} className={`w-7 h-7 rounded-lg text-[10px] font-bold ${myTasks.includes(`${key}_${type}`) ? 'bg-white text-black' : 'border border-neutral-800 text-neutral-500'}`}>
-                              {type === 'skim' ? '略' : type === 'read' ? '細' : '題'}
-                            </button>
-                          ))}
+                <div key={idx} className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl flex flex-col">
+                  <div className="text-sm font-bold mb-4 flex justify-between">
+                    <span className="text-neutral-200">{idx + 1}. {chap}</span>
+                    <span className="text-[10px] text-neutral-500">權重: {activeCategory.chapterWeights[idx]}%</span>
+                  </div>
+                  <div className="mt-auto space-y-2">
+                    {activeCategory.parts.map((part, pIdx) => {
+                      const key = `${activeSubject.id}_${activeCategory.id}_${idx}_${pIdx}`;
+                      return (
+                        <div key={pIdx} className="flex items-center justify-between bg-neutral-950 p-2.5 rounded-xl">
+                          <span className="text-xs text-neutral-400 font-medium">{part}</span>
+                          <div className="flex gap-1.5">
+                            {['skim', 'read', 'exam'].map(type => (
+                              <button key={type} onClick={() => toggleTask(`${key}_${type}`)} className={`w-8 h-8 rounded-lg text-[10px] font-bold transition-all ${myTasks.includes(`${key}_${type}`) ? 'bg-white text-black' : 'border border-neutral-800 text-neutral-500 hover:bg-neutral-800'}`}>
+                                {type === 'skim' ? '略' : type === 'read' ? '細' : '題'}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               ))}
             </div>
@@ -308,19 +343,22 @@ export default function App() {
       </main>
 
       {showLeaderboard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="p-5 border-b border-neutral-800 flex justify-between items-center">
-              <h3 className="font-bold flex items-center gap-2"><Trophy size={20}/> 戰力排行榜</h3>
-              <button onClick={() => setShowLeaderboard(false)}>✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md max-h-[75vh] overflow-hidden flex flex-col shadow-2xl">
+            <div className="p-6 border-b border-neutral-800 flex justify-between items-center bg-neutral-950">
+              <h3 className="font-bold text-lg flex items-center gap-2"><Trophy size={22} className="text-yellow-500"/> 藥生戰力榜</h3>
+              <button onClick={() => setShowLeaderboard(false)} className="text-neutral-500 hover:text-white">✕</button>
             </div>
-            <div className="overflow-y-auto p-2">
-              {allUsersData.map((u, idx) => (
-                <div key={idx} className={`flex items-center justify-between p-4 rounded-2xl mb-1 ${u.nickname === nickname ? 'bg-white text-black' : 'text-white'}`}>
-                  <span>{idx + 1}. {u.nickname}</span>
-                  <span className="font-black">{((u.totalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1)}%</span>
+            <div className="overflow-y-auto p-4 space-y-2">
+              {allUsersData.length > 0 ? allUsersData.map((u, idx) => (
+                <div key={idx} className={`flex items-center justify-between p-4 rounded-2xl ${u.nickname === nickname ? 'bg-white text-black shadow-lg scale-[1.02]' : 'bg-neutral-950 text-white'}`}>
+                  <div className="flex items-center gap-4">
+                    <span className={`font-black ${u.nickname === nickname ? 'text-black' : 'text-neutral-600'}`}>{idx + 1}</span>
+                    <span className="font-bold">{u.nickname} {u.nickname === nickname && "(你)"}</span>
+                  </div>
+                  <span className="font-black text-lg">{((u.totalPoints / GLOBAL_TOTAL_POINTS) * 100).toFixed(1)}%</span>
                 </div>
-              ))}
+              )) : <div className="text-center py-10 text-neutral-600">暫無數據</div>}
             </div>
           </div>
         </div>
